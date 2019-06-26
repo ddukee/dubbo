@@ -59,6 +59,13 @@ import static org.apache.dubbo.common.constants.CommonConstants.REMOVE_VALUE_PRE
  * <li>default extension is an adaptive instance</li>
  * </ul>
  *
+ * 每个可扩展的类型都有自己的ExtensionLoader实例，每个类型有且仅能有一个Adaptive类。
+ * Adaptive类型的原理其实就是对这个类型下所有扩展实现进行动态加载。
+ * Dubbo在实现上采用Javassist包动态生成扩展加载的逻辑，而不是采用硬编码的方式。
+ *
+ * 如果将@Adaptive注解配置在方法上，则原理上类似于一个工厂方法。
+ * 如果将@Adaptive注解配置在类上，则这个类就相当于是一个工厂类。
+ *
  * @see <a href="http://java.sun.com/j2se/1.5.0/docs/guide/jar/jar.html#Service%20Provider">Service Provider in Java 5</a>
  * @see org.apache.dubbo.common.extension.SPI
  * @see org.apache.dubbo.common.extension.Adaptive
@@ -102,7 +109,10 @@ public class ExtensionLoader<T> {
     private Map<String, IllegalStateException> exceptions = new ConcurrentHashMap<>();
 
     private ExtensionLoader(Class<?> type) {
+        // type所以需要被加载的SPI的类型
         this.type = type;
+
+        // 支持ExtensionFactory以SPI的方式扩展，如果type的类型是ExtensionFactory.class，则工厂方法置null
         objectFactory = (type == ExtensionFactory.class ? null : ExtensionLoader.getExtensionLoader(ExtensionFactory.class).getAdaptiveExtension());
     }
 
@@ -123,6 +133,7 @@ public class ExtensionLoader<T> {
                     ") is not an extension, because it is NOT annotated with @" + SPI.class.getSimpleName() + "!");
         }
 
+        // 获取指定SPI的加载器
         ExtensionLoader<T> loader = (ExtensionLoader<T>) EXTENSION_LOADERS.get(type);
         if (loader == null) {
             EXTENSION_LOADERS.putIfAbsent(type, new ExtensionLoader<T>(type));
@@ -534,6 +545,7 @@ public class ExtensionLoader<T> {
             }
             injectExtension(instance);
             Set<Class<?>> wrapperClasses = cachedWrapperClasses;
+            /* 如果有多个包装类，则会进行嵌套，嵌套的顺序不确定？ */
             if (CollectionUtils.isNotEmpty(wrapperClasses)) {
                 for (Class<?> wrapperClass : wrapperClasses) {
                     instance = injectExtension((T) wrapperClass.getConstructor(type).newInstance(instance));
@@ -614,12 +626,16 @@ public class ExtensionLoader<T> {
         return getExtensionClasses().get(name);
     }
 
+    /**
+     * 加载当前SPI扩展类的接口以及其实现，并缓存到cachedClasses中
+     * */
     private Map<String, Class<?>> getExtensionClasses() {
         Map<String, Class<?>> classes = cachedClasses.get();
         if (classes == null) {
             synchronized (cachedClasses) {
                 classes = cachedClasses.get();
                 if (classes == null) {
+                    // 开始加载，返回一个(插件名称,插件类对象)的Map
                     classes = loadExtensionClasses();
                     cachedClasses.set(classes);
                 }
@@ -699,6 +715,7 @@ public class ExtensionLoader<T> {
                             String name = null;
                             int i = line.indexOf('=');
                             if (i > 0) {
+                                // dubbo扩展的SPI机制，支持"扩展名称=扩展类Class名称"的格式
                                 name = line.substring(0, i).trim();
                                 line = line.substring(i + 1).trim();
                             }
@@ -725,8 +742,10 @@ public class ExtensionLoader<T> {
                     + clazz.getName() + " is not subtype of interface.");
         }
         if (clazz.isAnnotationPresent(Adaptive.class)) {
+            // 自适应扩展类型
             cacheAdaptiveClass(clazz);
         } else if (isWrapperClass(clazz)) {
+            // 包装类型
             cacheWrapperClass(clazz);
         } else {
             clazz.getConstructor();
@@ -789,6 +808,8 @@ public class ExtensionLoader<T> {
 
     /**
      * cache Adaptive class which is annotated with <code>Adaptive</code>
+     *
+     * 一个SPI实现只能有一个Adaptive类
      */
     private void cacheAdaptiveClass(Class<?> clazz) {
         if (cachedAdaptiveClass == null) {
@@ -804,6 +825,8 @@ public class ExtensionLoader<T> {
      * cache wrapper class
      * <p>
      * like: ProtocolFilterWrapper, ProtocolListenerWrapper
+     *
+     * 一个SPI支持多个Wrapper的实现
      */
     private void cacheWrapperClass(Class<?> clazz) {
         if (cachedWrapperClasses == null) {
@@ -819,6 +842,7 @@ public class ExtensionLoader<T> {
      */
     private boolean isWrapperClass(Class<?> clazz) {
         try {
+            // 如果SPI的实现包含了一个拷贝构造器，则认为是一个支持Wrapper的类
             clazz.getConstructor(type);
             return true;
         } catch (NoSuchMethodException e) {
