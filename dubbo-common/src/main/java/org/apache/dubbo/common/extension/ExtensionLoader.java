@@ -545,7 +545,7 @@ public class ExtensionLoader<T> {
             }
             injectExtension(instance);
             Set<Class<?>> wrapperClasses = cachedWrapperClasses;
-            /* 如果有多个包装类，则会进行嵌套，嵌套的顺序不确定？ */
+            /* 如果有多个包装类，则会进行嵌套，嵌套的顺序和扫描SPI定义的顺序有关 */
             if (CollectionUtils.isNotEmpty(wrapperClasses)) {
                 for (Class<?> wrapperClass : wrapperClasses) {
                     instance = injectExtension((T) wrapperClass.getConstructor(type).newInstance(instance));
